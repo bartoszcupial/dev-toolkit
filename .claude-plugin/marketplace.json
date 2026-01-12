@@ -2,6 +2,9 @@
   "name": "claude-code-plugins",
   "description": "Custom Claude Code plugins",
   "version": "1.0.0",
+  "owner": {
+    "name": "Bartosz Cupial"
+  },
   "plugins": [
     {
       "name": "project-maintainer",
