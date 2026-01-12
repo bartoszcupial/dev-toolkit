@@ -1,0 +1,12 @@
+{
+  "name": "claude-code-plugins",
+  "description": "Custom Claude Code plugins",
+  "version": "1.0.0",
+  "plugins": [
+    {
+      "name": "project-maintainer",
+      "description": "Intelligent dependency updates with changelog analysis",
+      "source": "./plugins/project-maintainer"
+    }
+  ]
+}

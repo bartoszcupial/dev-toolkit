@@ -1,0 +1,10 @@
+{
+  "name": "project-maintainer",
+  "description": "Intelligent dependency updates with changelog analysis and code impact detection",
+  "version": "1.0.0",
+  "license": "MIT",
+  "author": {
+    "name": "Bartosz Cupial"
+  },
+  "keywords": ["maintenance", "dependencies", "changelog", "migration", "updates"]
+}
