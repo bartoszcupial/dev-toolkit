@@ -1,20 +1,20 @@
-# Claude Code Plugins
+# Dev Toolkit
 
-Custom Claude Code plugins.
+Custom Claude Code plugins for development workflows.
 
 ## Setup (One-time)
 
 Add this marketplace in Claude Code:
 
 ```
-/plugin marketplace add bartoszcupial/claude-code-plugins
+/plugin marketplace add bartoszcupial/dev-toolkit
 ```
 
 ## Available Plugins
 
 | Plugin | Description | Install |
 |--------|-------------|---------|
-| project-maintainer | Dependency updates with changelog analysis | `/plugin install project-maintainer@claude-code-plugins` |
+| project-maintainer | Dependency updates with changelog analysis | `/plugin install project-maintainer@dev-toolkit` |
 
 ## Contributing
 
