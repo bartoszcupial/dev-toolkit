@@ -1,5 +1,5 @@
 {
-  "name": "claude-code-plugins",
+  "name": "dev-toolkit",
   "description": "Custom Claude Code plugins",
   "version": "1.0.0",
   "owner": {
