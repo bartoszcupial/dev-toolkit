@@ -10,6 +10,16 @@ Add this marketplace in Claude Code:
 /plugin marketplace add bartoszcupial/dev-toolkit
 ```
 
+## Updating
+
+To get the latest plugins, manually update the marketplace:
+
+```
+/plugin marketplace update dev-toolkit
+```
+
+You can also enable auto-updates via `/plugin` → **Marketplaces** → select `dev-toolkit` → **Enable auto-update**. See [Configure auto-updates](https://code.claude.com/docs/en/discover-plugins#configure-auto-updates) for details.
+
 ## Available Plugins
 
 | Plugin | Description | Install |
