@@ -15,6 +15,7 @@ Add this marketplace in Claude Code:
 | Plugin | Description | Install |
 |--------|-------------|---------|
 | project-maintainer | Dependency updates with changelog analysis | `/plugin install project-maintainer@dev-toolkit` |
+| feature-dev | Comprehensive feature development workflow with specialized agents (from Anthropic) | `/plugin install feature-dev@dev-toolkit` |
 
 ## Contributing
 
