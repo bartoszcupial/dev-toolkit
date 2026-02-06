@@ -1,7 +1,7 @@
 {
   "name": "dev-toolkit",
   "description": "Custom Claude Code plugins",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "owner": {
     "name": "Bartosz Cupial"
   },
@@ -10,6 +10,15 @@
       "name": "project-maintainer",
       "description": "Intelligent dependency updates with changelog analysis",
       "source": "./plugins/project-maintainer"
+    },
+    {
+      "name": "feature-dev",
+      "description": "Comprehensive feature development workflow with specialized agents for codebase exploration, architecture design, and quality review",
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official",
+        "path": "plugins/feature-dev"
+      }
     }
   ]
 }
