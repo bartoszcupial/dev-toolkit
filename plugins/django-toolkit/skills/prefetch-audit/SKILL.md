@@ -3,7 +3,7 @@ description: Audit Django code for N+1 prefetch_related bugs. Strawberry-django,
 when_to_use: "Before merging ORM / resolver / serializer changes, after adding prefetch_related(), or when investigating N+1 symptoms."
 argument-hint: "[path]"
 disable-model-invocation: true
-allowed-tools: Read Grep Glob WebFetch Bash(git diff:*) Bash(git status:*)
+allowed-tools: Read Grep Glob WebFetch Bash(git diff:*) Bash(git status:*) Bash(bash *)
 context: fork
 agent: Explore
 ---
@@ -14,7 +14,7 @@ Find N+1 query bugs in Django code: per-parent callsites that fire a DB query pe
 
 ## Detected environment
 
-!`${CLAUDE_SKILL_DIR}/scripts/detect-env.sh`
+!`bash ${CLAUDE_SKILL_DIR}/scripts/detect-env.sh`
 
 The environment block above is your starting context. Apply Django version notes from [core/orm-rules.md](core/orm-rules.md) only when the version is concrete (not `unknown` or `(declared, may be unpinned)`). Load framework overlays only for entries in `FRAMEWORKS_INSTALLED`:
 
