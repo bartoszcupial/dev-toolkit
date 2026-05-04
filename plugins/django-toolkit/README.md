@@ -7,9 +7,9 @@ Django-focused audits and base setup for Claude Code. Strawberry-django, DRF, an
 - **Per-parent N+1 detection** — Flags `prefetch_related` cache bypasses and missing prefetches in resolvers, serializer methods, model `@property`, admin callables, signals, Celery tasks, and `for obj in queryset:` loops.
 - **Multi-framework coverage** — Strawberry-django (`@strawberry_django.field`, `@model_property`, the `DjangoOptimizerExtension` selection-aware bypass trap), DRF (`SerializerMethodField`, `to_representation`, `ViewSet.get_queryset`, `setup_eager_loading`), and Django Ninja (`Schema.resolve_<field>`, route-handler queryset placement, `from_orm` timing).
 - **Helper-function awareness** — Catches the common gap where a helper that internally uses `prefetch_related` is invoked per-parent inside a resolver — the helper still runs N times regardless of its internal optimization.
-- **Environment auto-detection** — Django + API-framework versions resolved from lock files (`uv.lock`, `poetry.lock`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`). Pure shell, no Python interpreter required, works in Docker-only setups.
+- **Environment detection** — Django + API-framework versions resolved by reading `CLAUDE.md`, the closest manifest (`uv.lock`, `poetry.lock`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`), and cross-validating against actual `import` / decorator usage in the audit scope. Robust to monorepos, declared-but-unused deps, and unusual lockfile spellings.
 - **Doc grounding** — Cites the framework's own optimizer/serializer guide on every framework-specific finding, pinned to the detected version.
-- **Multi-shape fixes** — When multiple valid fix shapes exist, all are shown with a one-line trade-off; the developer picks.
+- **Project-aware fix recommendations** — When a framework offers a native shortcut (e.g. strawberry-django's `DjangoOptimizerExtension`), the audit verifies the prerequisite is wired up, presents both the framework-native and upstream-ORM options, and recommends one based on observed project signals — instead of dumping a generic shape and leaving the developer to choose blind.
 
 ## Usage
 
@@ -27,14 +27,14 @@ Argument forms:
 
 ## Workflow
 
-1. **Detect environment** — A bundled shell script walks lock files for Django + API-framework versions and emits a structured block (`DJANGO=`, `FRAMEWORKS_INSTALLED=`, `LOCKFILE=`) injected at skill load.
+1. **Detect environment** — Read `CLAUDE.md`, then the closest manifest, then `Grep` for framework imports/decorators in the audit scope. A framework counts as detected only when manifest *and* code agree (or `CLAUDE.md` asserts it). Disagreement is recorded in `Notes`.
 2. **Identify target files** — Empty arg → diff; file → that file; directory → recurse `*.py` (skipping `migrations/`, `__pycache__/`, `.venv/`, fixtures; cap 200 files).
 3. **Read with the call graph in mind** — Locate per-parent callsites by reading code semantically (not regex-only). Trace function calls into helpers; a helper called per-parent is per-parent regardless of its internal prefetch.
 4. **Apply rules** — Cache mechanic + per-parent vs single-shot classification + false-positive guard with caller verification.
-5. **Apply framework overlays** — Load only overlays for frameworks present in `FRAMEWORKS_INSTALLED`. Skip overlays for frameworks not in the project.
-6. **Locate prefetch site** — Sibling `views.py` / `queries.py`, type's `get_queryset`, field-level hints, `@model_property` on the model, custom managers wrapping `prefetch_related`.
+5. **Apply framework overlays** — Load only overlays for confirmed frameworks. Each overlay's `Prerequisites` rule runs to anchor the prefetch site and verify framework-native preconditions (e.g. `DjangoOptimizerExtension` registration for strawberry-django, `ViewSet.get_queryset` placement for DRF, route-handler placement for Ninja).
+6. **Locate prefetch site** — Driven by the overlay's `Prerequisites` rule. For plain-Django findings: `@model_property` on the model, custom managers wrapping `prefetch_related`, the `for` loop's queryset source.
 7. **Classify severity** — CRITICAL (per-parent) / MEDIUM (single-shot bypassing a confirmed prefetch) / drop (single-shot without prefetch — idiomatic Django).
-8. **Emit findings** — Structured report: `Summary` → `Findings` → `Recommended action plan` → `Notes`.
+8. **Emit findings** — Structured report: `Summary` → `Findings` → `Recommended action plan` → `Notes`. For findings with a framework-native shortcut, the `Fix` block presents Option A + Option B + a project-aware Recommendation.
 
 ## Severity Rules
 
@@ -59,44 +59,47 @@ Single-shot `.count()` / `.exists()` on a non-prefetched relation is **not** a f
 
 ```
 ### Summary
-Audited apps/review/ — 309 Python files. Detected Django 5.2.10 with strawberry-graphql-django 0.65.1
-and djangorestframework 3.16.1. Found 3 N+1 bugs: 2 CRITICAL in Review resolvers chaining .filter()
-on related managers, 1 MEDIUM in a resolver chaining .order_by() on a prefetched relation.
+Audited apps/orders/ — N Python files. Detected Django <version> with strawberry-graphql-django <version>.
+Found <N> N+1 bugs: <count> CRITICAL in resolvers chaining ORM verbs on related managers,
+<count> MEDIUM bypassing a confirmed prefetch.
 
 ### Findings
 
-[CRITICAL] apps/review/schema/nodes.py:40 — star_ratings resolver chains filter on related manager
+[CRITICAL] apps/orders/schema.py:LINE — active_line_items resolver chains filter on related manager
 
-- Problem: Resolver runs once per Review and chains `.select_related().filter()` on `parent.star_ratings`,
+- Problem: Resolver runs once per Order and chains `.filter()` on `self.line_items`,
   bypassing any upstream prefetch and firing one query per parent.
 - Current code:
   @strawberry_django.field()
-  def star_ratings(self, parent: strawberry.Parent) -> list[RatingType]:
-      return parent.star_ratings.select_related('question').filter(question__is_additional=False)
-- Prefetch site: Not prefetched (fix must add one)
-- Why it breaks: Any chained ORM verb on a related manager invalidates the prefetch cache. Per-parent
-  context = N+1.
+  def active_line_items(self) -> list[LineItemType]:
+      return self.line_items.filter(is_active=True)
+- Prefetch site: Not prefetched (fix must add one).
+- Why it breaks: Any chained ORM verb on a related manager invalidates the prefetch cache.
+  Per-parent context = N+1.
 - Fix:
-  # SQL-filter shape (callable Prefetch hint):
+  # Option A — Framework-native (field-level hint, requires DjangoOptimizerExtension):
   @strawberry_django.field(prefetch_related=[
-      lambda info: Prefetch('star_ratings',
-          queryset=Rating.objects.select_related('question').filter(question__is_additional=False),
-          to_attr='active_star_ratings')])
-  def star_ratings(self) -> list[RatingType]:
-      return self.active_star_ratings
+      lambda info: Prefetch('line_items',
+          queryset=LineItem.objects.select_related('product').filter(is_active=True),
+          to_attr='active_line_items')])
+  def active_line_items(self) -> list[LineItemType]:
+      return self.active_line_items
 
-  # Python-filter shape (string hint + comprehension):
-  @strawberry_django.field(prefetch_related=['star_ratings__question'])
-  def star_ratings(self) -> list[RatingType]:
-      return [r for r in self.star_ratings.all() if not r.question.is_additional]
+  # Option B — Upstream ORM prefetch (in the queryset builder):
+  Order.objects.prefetch_related(
+      Prefetch('line_items',
+          queryset=LineItem.objects.select_related('product').filter(is_active=True),
+          to_attr='_active_line_items'))
+  # resolver consumes the to_attr:
+  return parent._active_line_items
 
-  Trade-off: Pick SQL-filter if the relation can be large or you only need one subset.
-  Pick Python-filter if the relation is small and bounded or you need multiple subsets
-  (partition once, one query total).
-- Reference: https://strawberry.rocks/docs/django/guide/optimizer (strawberry-graphql-django 0.65.1)
+  Recommendation: <one paragraph citing the project signals surfaced by the overlay's
+  Prerequisites rule (e.g. whether DjangoOptimizerExtension is registered, where the
+  queryset builder lives, who else consumes it) and selecting Option A or B accordingly>.
+- Reference: https://strawberry.rocks/docs/django/guide/optimizer (strawberry-graphql-django <version>)
 
 ### Recommended action plan
-1. apps/review/schema/nodes.py:40, :44 — switch both star_ratings resolvers to the same fix shape.
+1. <file:LINE> — <change>.
 
 ### Notes
 (empty when nothing to report)

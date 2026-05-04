@@ -71,19 +71,19 @@ Sub-shape trade-off (use verbatim if both A1 and A2 apply):
 Prefetch lives in the queryset builder identified during Prerequisites — outside the resolver, on the queryset that feeds it. Same SQL-filter / Python-filter sub-shapes as plain Django.
 
 ```python
-# In the queryset builder (e.g. get_campaign_reviews):
-return Review.objects.prefetch_related(
+# In the queryset builder (e.g. get_orders_for_user):
+return Order.objects.prefetch_related(
     Prefetch(
-        'star_ratings',
-        queryset=Rating.objects.select_related('question').filter(question__is_additional=False),
-        to_attr='_active_star_ratings',
+        'line_items',
+        queryset=LineItem.objects.select_related('product').filter(is_active=True),
+        to_attr='_active_line_items',
     )
 )
 
 # In the resolver:
 @strawberry_django.field()
-def star_ratings(self, parent: strawberry.Parent) -> list[RatingType]:
-    return parent._active_star_ratings
+def active_line_items(self, parent: strawberry.Parent) -> list[LineItemType]:
+    return parent._active_line_items
 ```
 
 ### Recommendation rule
