@@ -25,6 +25,7 @@ You can also enable auto-updates via `/plugin` → **Marketplaces** → select `
 | Plugin | Description | Install |
 |--------|-------------|---------|
 | project-maintainer | Dependency updates with changelog analysis | `/plugin install project-maintainer@dev-toolkit` |
+| django-toolkit | Django ORM audits and base setup. Strawberry-django, DRF, and Django Ninja aware. | `/plugin install django-toolkit@dev-toolkit` |
 
 ## Contributing
 

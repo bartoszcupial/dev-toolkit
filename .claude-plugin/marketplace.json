@@ -1,7 +1,7 @@
 {
   "name": "dev-toolkit",
   "description": "Custom Claude Code plugins",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "owner": {
     "name": "Bartosz Cupial"
   },
@@ -10,6 +10,11 @@
       "name": "project-maintainer",
       "description": "Intelligent dependency updates with changelog analysis",
       "source": "./plugins/project-maintainer"
+    },
+    {
+      "name": "django-toolkit",
+      "description": "Django ORM audits and base setup. Strawberry-django, DRF, and Django Ninja aware.",
+      "source": "./plugins/django-toolkit"
     }
   ]
 }
