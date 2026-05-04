@@ -25,7 +25,6 @@ You can also enable auto-updates via `/plugin` → **Marketplaces** → select `
 | Plugin | Description | Install |
 |--------|-------------|---------|
 | project-maintainer | Dependency updates with changelog analysis | `/plugin install project-maintainer@dev-toolkit` |
-| feature-dev | Comprehensive feature development workflow with specialized agents (from Anthropic) | `/plugin install feature-dev@dev-toolkit` |
 
 ## Contributing
 
@@ -33,45 +32,6 @@ You can also enable auto-updates via `/plugin` → **Marketplaces** → select `
 2. Follow the plugin structure (see `plugins/project-maintainer/` as example)
 3. Add entry to `.claude-plugin/marketplace.json`
 4. Submit PR
-
-## Adding Plugins from Other Sources
-
-You can also add plugins from external repos to this marketplace.
-
-**Local plugin (in this repo):**
-```json
-{
-  "name": "my-plugin",
-  "description": "What it does",
-  "source": "./plugins/my-plugin"
-}
-```
-
-**GitHub repo:**
-```json
-{
-  "name": "cool-plugin",
-  "description": "A public plugin I like",
-  "source": {
-    "source": "github",
-    "repo": "owner/repo-name"
-  }
-}
-```
-
-**Any git URL:**
-```json
-{
-  "name": "team-plugin",
-  "description": "Plugin from another team",
-  "source": {
-    "source": "url",
-    "url": "https://github.com/org/plugin-repo.git"
-  }
-}
-```
-
-This lets you curate a mix of internal and external plugins in one marketplace.
 
 ## Plugin Requirements
 
