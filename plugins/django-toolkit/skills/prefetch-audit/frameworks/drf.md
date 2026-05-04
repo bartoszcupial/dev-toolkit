@@ -1,6 +1,8 @@
 # DRF overlay
 
-Apply when `FRAMEWORKS_INSTALLED` lists `djangorestframework:<version>`. Linked from `SKILL.md`.
+Apply when `djangorestframework` is confirmed in the environment-detection summary. Linked from `SKILL.md`.
+
+DRF has **no selection-aware optimizer extension** distinct from upstream prefetch. The framework-native answer for prefetching *is* upstream `prefetch_related` on the queryset that feeds the view. So this overlay presents a single canonical fix shape; the work the `Prerequisites` rule does for DRF is locating *where* upstream lives.
 
 ## Per-parent callsites in DRF
 
@@ -12,16 +14,20 @@ These methods are invoked once per object during list serialization. Treat them 
 - Methods on a `ModelSerializer` referenced from `Meta.fields` that compute values from related managers.
 - **Model `@property` / `@cached_property` referenced from `Meta.fields` or read inside `get_<field>` / `to_representation`.** A property that runs an ORM query (e.g. `Model.objects.annotate(...).get(id=self.id)` or `self.related.filter(...)`) executes per-row during list serialization. Open the property definition — if it touches the database, the entire field is per-parent regardless of the serializer code looking innocuous.
 
-## Where the prefetch belongs
+## Prerequisites
 
-Upstream, on the queryset that feeds the list endpoint. Common placements:
+Before writing the Fix, locate the **prefetch site** — i.e. where the queryset feeding this serializer originates. This anchors the fix at the right `path:LINE` and reveals scope (one view vs many).
 
-- `ViewSet.get_queryset()` — most common. Returns `Model.objects.prefetch_related(...).select_related(...)`.
-- `APIView.get_queryset()` for non-ViewSet endpoints.
-- The `setup_eager_loading` idiom (manual classmethod on the serializer that takes a queryset and applies `select_related` / `prefetch_related` based on the serializer's declared fields). The view calls `Serializer.setup_eager_loading(queryset)` before passing to `Serializer(qs, many=True)`.
-- A queryset helper or manager method called from `get_queryset`.
+`Grep` and read in this order:
 
-If the resolver / `get_<field>` chains an ORM verb on a related manager (`obj.children.filter(...)`, `obj.children.count()`), the upstream prefetch is bypassed regardless of where it lives. The fix is to either consume the cache (`obj.children.all()` plus Python-side filtering, or a `Prefetch(..., to_attr=)` with `obj.<to_attr>`) or push the filter into the upstream `Prefetch`.
+1. **The view class** that uses this serializer (`Grep` the serializer's class name across `views.py` / `viewsets.py`). Determine the queryset source:
+   - `get_queryset(self)` override → that's the prefetch site.
+   - `queryset = Model.objects.…` class attribute → convert to `get_queryset()` to add the prefetch (or extend the class attribute), and note this in the fix.
+   - Inherits a base ViewSet / mixin → check the base for an existing `get_queryset`; the prefetch may belong there if multiple views share it.
+2. **The `setup_eager_loading` idiom** — `Grep` for `setup_eager_loading` in the serializer class. If present, the prefetch belongs there (declared per-field, applied by the view before `many=True`). If absent and many serializers in the project share fields, mention it as a structural improvement, not a per-finding fix.
+3. **Pagination wrappers** — confirm the paginated viewset's `get_queryset` is what's actually iterated. `PageNumberPagination` over an unprefetched queryset N+1's per page item.
+
+Record the result on the finding's `Prefetch site:` line. If the resolver / `get_<field>` chains an ORM verb on a related manager (`obj.children.filter(...)`, `obj.children.count()`), the upstream prefetch is bypassed regardless of where it lives — the fix must either consume the cache or push the filter into the upstream `Prefetch`.
 
 ## Common DRF-specific traps
 
@@ -30,9 +36,11 @@ If the resolver / `get_<field>` chains an ORM verb on a related manager (`obj.ch
 - **Nested writable serializers.** `OrderSerializer` with a nested `LineItemSerializer(many=True)` where the parent's `create`/`update` iterates children — each child save can trigger queries; check if the parent prefetched.
 - **Pagination interaction.** `PageNumberPagination` over an unprefetched queryset N+1's once per page item. Verify the paginated viewset's `get_queryset` includes the prefetch.
 
-## Fix patterns (apply the cross-framework patterns from SKILL.md)
+## Fix structure (single canonical option)
 
-The two fix shapes that apply: upstream `Prefetch(..., to_attr=)` with SQL-side filtering (Pattern A), or upstream string-form `prefetch_related` plus Python-side comprehension (Pattern B). Same Pattern B validity rule: ORM calls in the comprehension are forbidden.
+DRF doesn't expose a framework-native shortcut distinct from upstream prefetch — the canonical fix is upstream `prefetch_related` at the prefetch site identified in Prerequisites. The two ORM sub-shapes from `SKILL.md` apply: SQL-filter (`Prefetch(..., to_attr=)` with filtered inner queryset) or Python-filter (string-form `prefetch_related` + comprehension). Same Pattern B validity rule: ORM calls in the comprehension are forbidden.
+
+When both sub-shapes are valid, present both with the trade-off line from `SKILL.md`. The placement (`get_queryset` / `setup_eager_loading` / shared mixin) is determined by Prerequisites, not by sub-shape choice.
 
 ```python
 # ViewSet upstream:

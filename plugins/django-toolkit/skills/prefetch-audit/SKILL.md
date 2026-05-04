@@ -3,7 +3,7 @@ description: Audit Django code for N+1 prefetch_related bugs. Strawberry-django,
 when_to_use: "Before merging ORM / resolver / serializer changes, after adding prefetch_related(), or when investigating N+1 symptoms."
 argument-hint: "[path]"
 disable-model-invocation: true
-allowed-tools: Read Grep Glob WebFetch Bash(git diff:*) Bash(git status:*) Bash(bash *)
+allowed-tools: Read Grep Glob WebFetch Bash(git diff:*) Bash(git status:*)
 context: fork
 agent: Explore
 ---
@@ -12,17 +12,29 @@ agent: Explore
 
 Find N+1 query bugs in Django code: per-parent callsites that fire a DB query per parent because they bypass or miss a `prefetch_related` cache.
 
-## Detected environment
+## Environment detection
 
-!`bash ${CLAUDE_SKILL_DIR}/scripts/detect-env.sh`
+Detect the stack before auditing. Use your tools — don't shell out to a script. Combine signals across these three sources, in order:
 
-The environment block above is your starting context. Apply Django version notes from [core/orm-rules.md](core/orm-rules.md) only when the version is concrete (not `unknown` or `(declared, may be unpinned)`). Load framework overlays only for entries in `FRAMEWORKS_INSTALLED`:
+1. **Read CLAUDE.md** at the project root and any nested `CLAUDE.md` inside the audit target's parent directories. If it names the Django version, API frameworks, or optimizer config, treat it as authoritative.
 
-- `strawberry-graphql-django:*` → [frameworks/strawberry-django.md](frameworks/strawberry-django.md)
-- `djangorestframework:*` → [frameworks/drf.md](frameworks/drf.md)
-- `django-ninja:*` → [frameworks/ninja.md](frameworks/ninja.md)
+2. **Read the closest manifest.** Walk up from the audit target until you find one of (preferred order): `uv.lock`, `poetry.lock`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`. Extract the Django version and any of these covered frameworks: `strawberry-graphql-django`, `djangorestframework`, `django-ninja`. A version sourced only from `pyproject.toml` is potentially unpinned — mark it `(declared, may be unpinned)`.
 
-If `FRAMEWORKS_INSTALLED` is empty the audit is plain Django (admin, signals, Celery, model `@property`, loops). Don't load framework files you don't need.
+3. **Cross-validate via code grep.** `Grep` the audit scope for framework signals: `import strawberry_django` / `@strawberry_django\.`, `from rest_framework`, `from ninja`. A framework counts as detected only when manifest *and* code agree, or when CLAUDE.md asserts it. Disagreement (declared but unused, or used but undeclared) → audit anyway and record in `Notes`.
+
+Emit a one-line summary at the top of the audit:
+
+```
+DJANGO=<version|unknown> [(<status>)] | <framework>=<version> [, ...] | source: <files>
+```
+
+Apply Django version notes from [core/orm-rules.md](core/orm-rules.md) only when the version is concrete (not `unknown` or `(declared, may be unpinned)`). Load framework overlays only for confirmed entries:
+
+- `strawberry-graphql-django` → [frameworks/strawberry-django.md](frameworks/strawberry-django.md)
+- `djangorestframework` → [frameworks/drf.md](frameworks/drf.md)
+- `django-ninja` → [frameworks/ninja.md](frameworks/ninja.md)
+
+If no overlay applies, audit as plain Django (admin, signals, Celery, model `@property`, loops). Don't load framework files you don't need.
 
 ## Target
 
@@ -51,7 +63,7 @@ You're not running a regex linter. You're a senior Django dev reading code with 
 
 2. **Trace into helpers.** Per-parent code often calls a helper that returns a queryset. Even if the helper does a perfect `prefetch_related` internally, **the helper itself runs per parent** — so the prefetch optimizes within each call but doesn't help across calls. Read the helper. If it touches the ORM and is called with parent-derived arguments inside a per-parent callsite, the entire call is per-parent. See the "Helper-function pattern" section in [core/orm-rules.md](core/orm-rules.md) for the canonical example.
 
-3. **For each suspicious chain, find the upstream prefetch.** Look in the obvious places — `ViewSet.get_queryset` (DRF), the route handler (Ninja), `@strawberry_django.field` hints (strawberry), `@model_property` on the model, custom managers that wrap `prefetch_related`. Record the exact `path:LINE` where the prefetch is defined, or note `Not prefetched (fix must add one)` if you've checked and it isn't there.
+3. **Run the overlay's `Prerequisites` rule for each suspicious chain.** Each loaded overlay declares what to grep for and how to interpret the result. The rule does two jobs: (a) it anchors the prefetch site (`path:LINE`) on the finding; (b) where the framework offers a native shortcut, it tells you whether the shortcut is currently available (e.g. is strawberry's `DjangoOptimizerExtension` registered?). If the prerequisite isn't met, follow the overlay's fallback before writing the Fix section. For plain-Django findings (no overlay), look in the obvious places — `@model_property` on the model, custom managers wrapping `prefetch_related`, the `for` loop's queryset source — and record `path:LINE` or `Not prefetched (fix must add one)`.
 
 4. **Classify per-parent vs single-shot by tracing callers.** A function that *looks* single-shot (a `retrieve` action, a helper named `get_one_thing`) may also be reachable from a list action via a mixin, from a Celery batch task, or from a serializer that's used on both detail and list views. Use `Grep` to search for callers before applying the false-positive guard. The classification is per *callsite chain*, not per function name.
 
@@ -59,7 +71,9 @@ You're not running a regex linter. You're a senior Django dev reading code with 
 
 ## Fix shapes
 
-Two patterns cover almost every fix; framework overlays show their idiomatic forms.
+**For findings inside a framework overlay's scope**, follow that overlay's Fix structure. Most overlays present **Option A (framework-native)** + **Option B (upstream ORM)** + a project-aware **Recommendation** based on the signals their `Prerequisites` rule surfaced. Some frameworks have no native shortcut distinct from upstream prefetch — those overlays present a single canonical shape with placement guidance.
+
+**For plain-Django findings (no overlay applies)**, two patterns cover almost every fix:
 
 **SQL-filter shape** — push the filter into the prefetched queryset, materialize only matching rows:
 
@@ -84,11 +98,9 @@ Parent.objects.prefetch_related('children__category')
 
 **Pattern B (Python-filter) validity rule:** the comprehension predicate must be a plain attribute read or a read of a pre-prefetched attribute. ORM calls in the predicate (`.filter()`, `.exists()`, `Model.objects.*`) turn N+1 into N×M and disqualify Pattern B for that finding — propose only the SQL-filter shape.
 
-**Trade-off line** (use verbatim when both shapes apply):
+**Trade-off line** (use verbatim when both plain-Django shapes apply):
 
 > Pick the SQL-filter shape if the relation can be large or you only need one subset. Pick the Python-filter shape if the relation is small and bounded or you need multiple subsets (partition once, one query total).
-
-For strawberry-django the same two shapes have framework-specific form (callable `Prefetch=` vs string-form `prefetch_related=`); see the overlay. For DRF and Ninja the prefetch goes upstream into `get_queryset` / route handler.
 
 Other recurring fixes:
 
@@ -108,7 +120,7 @@ Use this structure exactly. No preamble. The first line of output is the `### Su
 
 ### Summary
 
-2–4 sentences: scope (files audited, target path), findings by severity, dominant pattern. State the detected Django version and frameworks. If clean, say so plainly.
+2–4 sentences: scope (files audited, target path), findings by severity, dominant pattern. State the detected Django version and frameworks (the one-line summary from Environment detection). If clean, say so plainly.
 
 ### Findings
 
@@ -121,9 +133,13 @@ Omit if none. For each:
   ```python
   # 2–5 lines
   ```
-- **Prefetch site:** `path:LINE` OR `Not prefetched (fix must add one)`
+- **Prefetch site:** `path:LINE` OR `Not prefetched (fix must add one)`.
 - **Why it breaks:** One sentence tying to the rule.
-- **Fix:** Show every valid fix shape, each as a small code block, followed by the trade-off line. For strawberry-django the two shapes are the callable `Prefetch=` and string-form `prefetch_related=` from the overlay. For other frameworks they're the upstream-Pattern-A and upstream-Pattern-B variants. Don't pick a winner — present the options.
+- **Fix:**
+  - When a framework overlay with two options applies: present **Option A (framework-native)** and **Option B (upstream ORM)** as separate code blocks, then a one-paragraph **Recommendation** citing the project signals the overlay's `Prerequisites` rule surfaced (e.g. "DjangoOptimizerExtension confirmed at `apps/config/schema.py:42`; queryset builder is shared by two views — prefer Option A, co-locates the optimization with the field"). If the prerequisite isn't met, lead with Option B and note what would need to change to enable Option A.
+  - When a framework overlay with one canonical shape applies: present that shape with placement guidance from the overlay.
+  - For plain-Django findings: present the SQL-filter and Python-filter shapes with the trade-off line.
+  - If only one shape is valid (e.g. predicate disqualifies Pattern B), say so plainly.
 - **Reference:** doc URL + detected version (framework-specific findings) or Django docs URL (ORM-only findings).
 
 Sort CRITICAL → MEDIUM, then by path.
@@ -136,9 +152,10 @@ Sort CRITICAL → MEDIUM, then by path.
 
 Use for:
 
-- `DJANGO=unknown` / `LOCKFILE=none` → environment detection inconclusive; version-gated rules skipped.
+- `DJANGO=unknown` → environment detection inconclusive; version-gated rules skipped.
 - `(declared, may be unpinned)` → version came from `pyproject.toml`; install a lock file for accurate version-aware audit.
 - EOL Django version → upgrade strongly recommended.
+- Manifest/code disagreement (declared but unused, or used but undeclared) → call it out so the user can fix project state.
 - Scan truncation, ambiguous classifications, frameworks detected outside the covered set.
 
 Skip the section entirely if there's nothing to say.
@@ -150,7 +167,8 @@ Skip the section entirely if there's nothing to say.
 - Review-only. No file modifications.
 - Local-first investigation. Grep outward only to answer a specific question — don't crawl the project.
 - Use `Grep` to locate suspect chains; don't read files cover-to-cover. Read the full relevant function, not the whole module.
-- Show every valid fix shape with the trade-off line. Never pick a winner.
+- Always run the loaded overlay's `Prerequisites` rule before writing a Fix — never skip ahead with a guess.
+- For findings with two valid options, present both *and* a project-aware Recommendation. Don't punt with "either works." Don't pick a winner without citing the project signal.
 - The single false-positive guard: single-shot `.count()` / `.exists()` / `.aggregate()` on a non-prefetched relation = not a finding. Verify single-shot status by tracing callers first. Drop entirely if the guard applies — no MEDIUM, no "optional" hedge.
 - MEDIUM requires a concrete `path:LINE` upstream prefetch site. No prefetch site → no MEDIUM.
 - Total output ≤ 400 lines. One final output, no intermediate drafts, no preamble.
