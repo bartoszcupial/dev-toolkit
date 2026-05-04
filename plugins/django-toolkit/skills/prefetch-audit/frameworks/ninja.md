@@ -1,6 +1,8 @@
 # Django Ninja overlay
 
-Apply when `FRAMEWORKS_INSTALLED` lists `django-ninja:<version>`. Linked from `SKILL.md`.
+Apply when `django-ninja` is confirmed in the environment-detection summary. Linked from `SKILL.md`.
+
+Like DRF, Ninja has **no selection-aware optimizer** — `Schema.from_orm` just reads attributes. The framework-native answer for prefetching *is* upstream `prefetch_related` on the queryset returned by the route handler. So this overlay presents a single canonical fix shape; the work the `Prerequisites` rule does for Ninja is locating *where* upstream lives.
 
 ## Per-parent callsites in Ninja
 
@@ -9,15 +11,20 @@ Apply when `FRAMEWORKS_INSTALLED` lists `django-ninja:<version>`. Linked from `S
 - `Schema.from_orm(model_instance)` calls inside a list response — each call evaluates resolvers per instance.
 - Property-style schema fields that touch relations.
 
-## Where the prefetch belongs
+## Prerequisites
 
-Upstream, on the queryset *before* it's converted to schemas. Common placements:
+Before writing the Fix, locate the **prefetch site** — i.e. where the queryset returned by the route handler originates. This anchors the fix at the right `path:LINE` and reveals scope.
 
-- The route handler itself — `Order.objects.prefetch_related(...).all()` returned to a `list[OrderSchema]` response.
-- A queryset helper (manager method, view-level helper) called from the route handler.
-- A custom `Schema.Config.from_orm` override — but uncommon; usually the route handler does the work.
+`Grep` and read in this order:
 
-`Schema.from_orm` doesn't trigger prefetch on its own; it just reads attributes. If the queryset wasn't prefetched upstream, every `resolve_<field>` that touches a relation N+1's silently.
+1. **The route handler** for this schema (`Grep` the schema class name across `api.py` / `routers/*.py`). Determine the queryset source:
+   - Inline `Model.objects.…` in the handler body → the handler is the prefetch site.
+   - Returns a queryset from a helper (`get_orders(...)`) or manager method (`Order.objects.for_user(user)`) → the helper is the prefetch site.
+   - `Schema.from_orm(...)` called inside a loop → flag the loop body itself; the queryset feeding the loop is the prefetch site.
+2. **`django-ninja-extra` controllers** — if installed, controllers may centralize queryset construction. `Grep` for `ControllerBase` or `@api_controller`. Different placement convention; treat the controller method as the prefetch site.
+3. **Async handlers (`async def`) and `sync_to_async` wrappers** — confirm the prefetch is applied *before* the wrapper, not after. `sync_to_async(list)(qs)` evaluates the queryset; any `prefetch_related` chained after that point is a no-op.
+
+Record the result on the finding's `Prefetch site:` line. If a `resolve_<field>` chains an ORM verb on a related manager (`obj.children.filter(...)`), the upstream prefetch is bypassed regardless of placement — the fix must either consume the cache or push the filter into the upstream `Prefetch`.
 
 ## Ninja-specific traps
 
@@ -26,9 +33,11 @@ Upstream, on the queryset *before* it's converted to schemas. Common placements:
 - **Async handlers (`async def`) and `sync_to_async` wrappers.** When the route is async, you may see `sync_to_async(list)(queryset)` patterns. The prefetch still works, but verify the queryset was prefetched before the wrapper, not after.
 - **Nested schemas.** `OrderSchema` containing `line_items: list[LineItemSchema]` — each `LineItemSchema` instantiation per row N+1's if `line_items` wasn't prefetched on the parent queryset.
 
-## Fix pattern
+## Fix structure (single canonical option)
 
-Pattern A or B from SKILL.md — same as DRF, applied at the route-handler layer.
+Ninja doesn't expose a framework-native shortcut distinct from upstream prefetch — the canonical fix is upstream `prefetch_related` at the prefetch site identified in Prerequisites (route handler, queryset helper, or controller method). The two ORM sub-shapes from `SKILL.md` apply: SQL-filter (`Prefetch(..., to_attr=)` with filtered inner queryset) or Python-filter (string-form `prefetch_related` + comprehension). Same Pattern B validity rule: ORM calls in the comprehension are forbidden.
+
+When both sub-shapes are valid, present both with the trade-off line from `SKILL.md`. The placement is determined by Prerequisites, not by sub-shape choice.
 
 ```python
 # Route handler:
