@@ -86,14 +86,29 @@ def active_line_items(self, parent: strawberry.Parent) -> list[LineItemType]:
     return parent._active_line_items
 ```
 
-### Recommendation rule
+### Evaluation rule (bidirectional)
 
-State the selected option in one sentence on the Fix block, citing project signals from Prerequisites:
+Apply both directions — Option A is **not** the default winner just because the framework is wired up. Use the Pre-flight signals (which exist in the audit output) to decide. The verdict on each option must cite one or more of: `DjangoOptimizerExtension`, `Queryset builder for target`, `Other consumers of that queryset builder`, plus this finding's `Why it breaks`.
 
-- **DjangoOptimizerExtension is registered AND the queryset builder is shared by multiple views/callsites** → prefer **Option A**. Selection-aware (only prefetches when the field is queried), co-located with the field, impossible to forget.
-- **DjangoOptimizerExtension is NOT registered** → only **Option B** is valid right now. Mention enabling the extension as an optional follow-up improvement.
-- **Queryset builder is dedicated to this view AND the field is unconditional in the GraphQL response** → either works. Prefer **Option B** for explicitness — the cost of always-prefetching is irrelevant when the field is always selected.
-- **Predicate or sub-relation is shared with non-GraphQL paths** (admin, exports, Celery, internal services) → prefer **Option B**, or move the predicate to a `@model_property(prefetch_related=...)` (see below) so the optimization applies in both GraphQL and Python contexts.
+**Pick Option A (framework-native) when:**
+
+- DjangoOptimizerExtension is registered, AND
+- the field is *conditionally* selected by clients (some queries skip it) — selection-awareness saves the prefetch query when the field is absent, OR
+- the same predicate appears on resolvers in multiple types and there is no centralizing queryset builder — field-level hint prevents drift, OR
+- the resolver is genuinely GraphQL-only with no non-GraphQL consumers.
+
+**Pick Option B (upstream ORM) — even when DjangoOptimizerExtension is registered — when:**
+
+- the queryset builder is shared with non-GraphQL paths (admin, exports, Celery, internal services) — single prefetch site beats fragmented hints, OR
+- the field is unconditionally selected in every GraphQL query — selection-awareness offers no benefit, upstream is simpler and more debuggable, OR
+- multiple subsets of the same relation are needed — one upstream `prefetch_related` with Python-filter is cleaner than two field-level hints, OR
+- the relation is the model's central relation and is always touched anyway — push it to the queryset builder or a manager method.
+
+**Pick Option B by force when:**
+
+- DjangoOptimizerExtension is **not** registered — Option A's verdict line states "No — DjangoOptimizerExtension not found; field-level hints will not apply." Optionally mention "enabling the extension is a follow-up improvement," but do not present Option A as the recommendation.
+
+When Pre-flight signals are insufficient to pick a winner (e.g. you couldn't determine whether the queryset builder has other consumers), state that on both verdict lines and pick the safer choice — usually Option B — and label the residual ambiguity in `Notes`.
 
 ## `@model_property` / `@cached_model_property`
 

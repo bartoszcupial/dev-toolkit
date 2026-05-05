@@ -1,7 +1,7 @@
 {
   "name": "django-toolkit",
   "description": "Django ORM audits and base setup. Strawberry-django, DRF, and Django Ninja aware.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "author": {
     "name": "Bartosz Cupial"

@@ -20,21 +20,19 @@ Detect the stack before auditing. Use your tools — don't shell out to a script
 
 2. **Read the closest manifest.** Walk up from the audit target until you find one of (preferred order): `uv.lock`, `poetry.lock`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`. Extract the Django version and any of these covered frameworks: `strawberry-graphql-django`, `djangorestframework`, `django-ninja`. A version sourced only from `pyproject.toml` is potentially unpinned — mark it `(declared, may be unpinned)`.
 
-3. **Cross-validate via code grep.** `Grep` the audit scope for framework signals: `import strawberry_django` / `@strawberry_django\.`, `from rest_framework`, `from ninja`. A framework counts as detected only when manifest *and* code agree, or when CLAUDE.md asserts it. Disagreement (declared but unused, or used but undeclared) → audit anyway and record in `Notes`.
+3. **Cross-validate via code grep.** `Grep` the audit scope for framework signals: `import strawberry_django` / `@strawberry_django\.`, `from rest_framework`, `from ninja`. Detection result combines manifest, code, and CLAUDE.md; record disagreement (declared but unused, or used but undeclared) in `Notes`.
 
-Emit a one-line summary at the top of the audit:
+**Hard gate — overlay loading is mandatory on code signal.** If `Grep` of the audit target returns *any* of the patterns below, you **must** load the corresponding overlay before writing any Finding. A missing manifest entry does not override code presence. Code signal is sufficient and binding.
 
-```
-DJANGO=<version|unknown> [(<status>)] | <framework>=<version> [, ...] | source: <files>
-```
+| Code signal | Overlay you must load |
+|---|---|
+| `@strawberry_django\.` or `import strawberry_django` | [frameworks/strawberry-django.md](frameworks/strawberry-django.md) |
+| `from rest_framework` | [frameworks/drf.md](frameworks/drf.md) |
+| `from ninja` | [frameworks/ninja.md](frameworks/ninja.md) |
 
-Apply Django version notes from [core/orm-rules.md](core/orm-rules.md) only when the version is concrete (not `unknown` or `(declared, may be unpinned)`). Load framework overlays only for confirmed entries:
+Apply Django version notes from [core/orm-rules.md](core/orm-rules.md) only when the version is concrete (not `unknown` or `(declared, may be unpinned)`).
 
-- `strawberry-graphql-django` → [frameworks/strawberry-django.md](frameworks/strawberry-django.md)
-- `djangorestframework` → [frameworks/drf.md](frameworks/drf.md)
-- `django-ninja` → [frameworks/ninja.md](frameworks/ninja.md)
-
-If no overlay applies, audit as plain Django (admin, signals, Celery, model `@property`, loops). Don't load framework files you don't need.
+If no overlay's code signal matches, audit as plain Django (admin, signals, Celery, model `@property`, loops). Don't load framework files you don't need.
 
 ## Target
 
@@ -71,7 +69,7 @@ You're not running a regex linter. You're a senior Django dev reading code with 
 
 ## Fix shapes
 
-**For findings inside a framework overlay's scope**, follow that overlay's Fix structure. Most overlays present **Option A (framework-native)** + **Option B (upstream ORM)** + a project-aware **Recommendation** based on the signals their `Prerequisites` rule surfaced. Some frameworks have no native shortcut distinct from upstream prefetch — those overlays present a single canonical shape with placement guidance.
+**For findings inside a framework overlay's scope**, follow that overlay's Fix structure. Two-option overlays (currently: strawberry-django) present `**Option A**` + `**Option B**`, each carrying a one-line `*Best fit for this finding:*` verdict that cites Pre-flight signals — see the per-finding format in the Output section. Single-option overlays (DRF, Ninja) present the canonical shape with one verdict line.
 
 **For plain-Django findings (no overlay applies)**, two patterns cover almost every fix:
 
@@ -114,13 +112,29 @@ When you emit a finding, cite the relevant authoritative doc on a `Reference:` l
 
 ## Output
 
-Use this structure exactly. No preamble. The first line of output is the `### Summary` heading.
+Your **first emitted token is `#`**. Anything before — "Now let me…", "I'll start by…", "Let me analyze…", or any other narration — is a bug. Run all detection, grepping, and reading silently with your tools, then emit the structured output below in one shot.
+
+Use this structure exactly.
 
 ---
 
+### Pre-flight
+
+Required block. Emit verbatim, one line each, before the Summary. The agent that skipped this block on the previous run is the failure mode this exists to prevent.
+
+```
+- Target: <path or "git diff HEAD -- '*.py'">
+- Overlays loaded: <strawberry-django | drf | ninja | none>  (signals: <code: imports/decorators found in <files>> + <manifest: package found in <file>> | CLAUDE.md asserts)
+- DjangoOptimizerExtension: <path:LINE registered with schema | imported but not registered | not found>   ← only if strawberry-django overlay loaded
+- Queryset builder for target: <path:LINE | not located, fix must add one>
+- Other consumers of that queryset builder: <list of paths or "none — dedicated to this view">
+```
+
+The verdict on each Fix option must cite at least one line from this block. No verdict without evidence.
+
 ### Summary
 
-2–4 sentences: scope (files audited, target path), findings by severity, dominant pattern. State the detected Django version and frameworks (the one-line summary from Environment detection). If clean, say so plainly.
+2–4 sentences: scope (files audited, target path), findings by severity, dominant pattern. State the detected Django version and frameworks. If clean, say so plainly.
 
 ### Findings
 
@@ -135,11 +149,29 @@ Omit if none. For each:
   ```
 - **Prefetch site:** `path:LINE` OR `Not prefetched (fix must add one)`.
 - **Why it breaks:** One sentence tying to the rule.
-- **Fix:**
-  - When a framework overlay with two options applies: present **Option A (framework-native)** and **Option B (upstream ORM)** as separate code blocks, then a one-paragraph **Recommendation** citing the project signals the overlay's `Prerequisites` rule surfaced (e.g. "DjangoOptimizerExtension confirmed at `apps/config/schema.py:42`; queryset builder is shared by two views — prefer Option A, co-locates the optimization with the field"). If the prerequisite isn't met, lead with Option B and note what would need to change to enable Option A.
-  - When a framework overlay with one canonical shape applies: present that shape with placement guidance from the overlay.
-  - For plain-Django findings: present the SQL-filter and Python-filter shapes with the trade-off line.
-  - If only one shape is valid (e.g. predicate disqualifies Pattern B), say so plainly.
+- **Fix:** Use the structure for the loaded overlay (or plain Django if no overlay loaded):
+
+  **Two-option overlay loaded** (currently: strawberry-django) — every Fix block **must** contain `**Option A**` and `**Option B**` subheadings, each followed by code, each followed by a one-line `*Best fit for this finding:*` verdict. Verdict format:
+
+  ```
+  **Option A — Framework-native (<short label>)**
+  ```python
+  <code>
+  ```
+  *Best fit for this finding:* <Yes — primary recommendation | No | Yes, with caveat>. <one-line reason citing a Pre-flight signal>
+
+  **Option B — Upstream ORM prefetch**
+  ```python
+  <code>
+  ```
+  *Best fit for this finding:* <Yes — primary recommendation | No | Yes, with caveat>. <one-line reason citing a Pre-flight signal>
+  ```
+
+  Exactly one option per finding is labeled "Yes — primary recommendation." If a sub-option is invalidated (predicate disqualifies Python-filter; optimizer not registered), keep the header and state the disqualification on the verdict line — do not omit the option.
+
+  **Single-option overlay loaded** (DRF, Ninja) — present the canonical shape with the verdict line: `*Best fit for this finding:* Yes — only valid placement is <path:LINE from Pre-flight>.`
+
+  **No overlay loaded (plain Django)** — present SQL-filter and Python-filter shapes with verdict lines on each. The trade-off rules in [core/orm-rules.md](core/orm-rules.md) drive the verdict.
 - **Reference:** doc URL + detected version (framework-specific findings) or Django docs URL (ORM-only findings).
 
 Sort CRITICAL → MEDIUM, then by path.
@@ -167,8 +199,9 @@ Skip the section entirely if there's nothing to say.
 - Review-only. No file modifications.
 - Local-first investigation. Grep outward only to answer a specific question — don't crawl the project.
 - Use `Grep` to locate suspect chains; don't read files cover-to-cover. Read the full relevant function, not the whole module.
-- Always run the loaded overlay's `Prerequisites` rule before writing a Fix — never skip ahead with a guess.
-- For findings with two valid options, present both *and* a project-aware Recommendation. Don't punt with "either works." Don't pick a winner without citing the project signal.
+- Always run the loaded overlay's `Prerequisites` rule and emit the Pre-flight block before writing a Fix — never skip ahead with a guess.
+- For findings under a two-option overlay, present *both* options with verdict lines. Each verdict must cite a Pre-flight signal. Exactly one option is labeled "Yes — primary recommendation"; never omit an option because you've already picked a winner.
+- The framework-native option is *not* the default winner. Apply the overlay's bidirectional evaluation rule: there are real cases where upstream ORM beats framework-native even when the framework is fully wired up (shared queryset builder, unconditional field selection, multiple subsets).
 - The single false-positive guard: single-shot `.count()` / `.exists()` / `.aggregate()` on a non-prefetched relation = not a finding. Verify single-shot status by tracing callers first. Drop entirely if the guard applies — no MEDIUM, no "optional" hedge.
 - MEDIUM requires a concrete `path:LINE` upstream prefetch site. No prefetch site → no MEDIUM.
 - Total output ≤ 400 lines. One final output, no intermediate drafts, no preamble.
